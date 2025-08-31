@@ -9,6 +9,7 @@
 #include "libvm.h"
 #include "hostd.h"
 #include "log.h"
+#include "version.h"
 
 static int ok(char *out, size_t outsz, const char *fmt, ...) {
     va_list ap;
