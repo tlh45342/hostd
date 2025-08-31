@@ -34,3 +34,5 @@ sudo systemctl status hostd
 ```
 
 journalctl -u hostd -f
+
+sudo systemctl daemon-reload
