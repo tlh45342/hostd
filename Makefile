@@ -25,4 +25,19 @@ install: hostd
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 0755 hostd $(DESTDIR)$(BINDIR)/hostd
 
-.PHONY: all clean install
+.PHONY: all clean 
+
+PREFIX  ?= /usr/local
+BINDIR  ?= $(PREFIX)/bin
+UNITDIR ?= /etc/systemd/system
+
+install: hostd
+	install -d $(DESTDIR)$(BINDIR)
+	install -m 0755 hostd $(DESTDIR)$(BINDIR)/hostd
+	# install systemd unit file
+	install -d $(DESTDIR)$(UNITDIR)
+	install -m 0644 systemd/hostd.service $(DESTDIR)$(UNITDIR)/hostd.service
+	# reload systemd so it sees the new service
+	systemctl daemon-reload
+	# optionally enable on install
+	# systemctl enable hostd
