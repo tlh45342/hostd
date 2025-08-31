@@ -1,0 +1,9 @@
+# hostd
+
+VERSION: alpha.
+
+This is a strawman version.  Just enough to compile.
+
+This is for the reciprecal part of vim-cmd.  It will act as a contact point which instantiates vmlib.
+
+ALL OF THIS IS EXPERIMENTAL
