@@ -6,6 +6,8 @@
 
 #include "log.h"
 
+FILE *g_logfp = NULL;
+
 void log_init(const char *path, int foreground) {
     if (foreground) {
         g_logfp = stderr;
