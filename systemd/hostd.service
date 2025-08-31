@@ -3,7 +3,9 @@ Description=HostD VM Daemon
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/hostd -S /var/run/hostd.sock -l /var/log/hostd.log -p /var/run/hostd.pid
+#ExecStart=/usr/local/bin/hostd -S /var/run/hostd.sock -l /var/log/hostd.log -p /var/run/hostd.pid
+ExecStart=/usr/local/bin/hostd -f -T 0.0.0.0:9000 -l /var/log/hostd.log
+
 Restart=always
 RestartSec=3
 User=root
