@@ -16,3 +16,14 @@ git clone https://github.com/tlh45342/hostd.git
 cd mtools
 make ; make install
 ```
+
+## SERVICE.D
+
+Please note the following systemctl commands for controlling the service after using "make insall:
+which will install the appropriate hostd.service file.
+
+```bash
+sudo systemctl enable hostd 
+sudo systemctl start hostd
+sudo systemctl status hostd
+```
