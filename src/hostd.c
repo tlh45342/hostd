@@ -11,6 +11,7 @@
 #include "log.h"
 #include "daemonize.h"
 #include "libvm.h"
+#include "version.h"
 
 volatile sig_atomic_t g_running = 1;
 int g_verbose = 0;
