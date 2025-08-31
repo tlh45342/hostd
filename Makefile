@@ -1,6 +1,6 @@
 # hostd strawman - Makefile
 CC      ?= gcc
-CFLAGS  ?= -Wall -Wextra -O2 -g -DHOSTD_VERSION=\"0.1.0\" -D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE
+CFLAGS  ?= -Wall -Wextra -O2 -g -D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE
 LDFLAGS ?=
 
 PREFIX  ?= /usr/local
