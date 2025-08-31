@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <signal.h>
+#include <sys/stat.h> 
 
 #include "hostd.h"
 #include "protocol.h"
