@@ -1,7 +1,7 @@
-// vim-cmd.c - cross-platform client for hostd with config + interactive shell
+// examples/vim-cmd.c - cross-platform client for hostd with config + interactive shell
 // - Unix (Linux/macOS): UNIX domain sockets + TCP
 // - Windows: TCP (Winsock2)
-// Build (Unix):    cc -Wall -Wextra -O2 -g -o vim-cmd examples/vim-cmd.c
+// Build (Unix):    cc -Wall -Wextra -O2 -g -Iinclude -o vim-cmd examples/vim-cmd.c
 // Build (MinGW):   x86_64-w64-mingw32-gcc -O2 -o vim-cmd.exe examples/vim-cmd.c -lws2_32
 
 #define _POSIX_C_SOURCE 200809L
@@ -37,24 +37,23 @@
   #define PATH_SEP '/'
 #endif
 
-typedef enum { MODE_UNSET=0, MODE_UNIX=1, MODE_TCP=2 } vc_mode_t;
+// ----- Modes -----
+typedef enum { VC_MODE_UNSET=0, VC_MODE_UNIX=1, VC_MODE_TCP=2 } vc_mode_t;
 
+// ----- Config -----
 typedef struct {
     vc_mode_t mode;
     char   socket_path[256];
     char   host[128];
     int    port;
     char   cfg_path[512];
-} cfg_t;
+} cfg_t; // <-- important: trailing semicolon!
 
-static const char *DEFAULT_UNIX_SOCK =
-#ifdef _WIN32
-    NULL
-#else
-    "/tmp/hostd.sock"
+#ifndef _WIN32
+static const char *DEFAULT_UNIX_SOCK = "/tmp/hostd.sock";
 #endif
-;
 
+// ----- Utils -----
 static char *trim(char *s) {
     if (!s) return s;
     while (isspace((unsigned char)*s)) s++;
@@ -66,12 +65,11 @@ static char *trim(char *s) {
 
 static void default_cfg_path(char *out, size_t outsz) {
 #ifdef _WIN32
-    char *appdata = getenv("APPDATA"); // e.g., C:\Users\you\AppData\Roaming
+    const char *appdata = getenv("APPDATA"); // C:\Users\you\AppData\Roaming
     if (appdata && *appdata) {
         snprintf(out, outsz, "%s\\vim-cmd\\config", appdata);
     } else {
-        // Fallback to USERPROFILE
-        char *home = getenv("USERPROFILE");
+        const char *home = getenv("USERPROFILE");
         if (!home) home = "";
         snprintf(out, outsz, "%s\\AppData\\Roaming\\vim-cmd\\config", home);
     }
@@ -93,20 +91,19 @@ static void default_cfg_path(char *out, size_t outsz) {
 static void cfg_init_defaults(cfg_t *c) {
     memset(c, 0, sizeof(*c));
 #ifdef _WIN32
-    c->mode = MODE_TCP;
+    c->mode = VC_MODE_TCP;
     c->port = 9000;
-    strncpy(c->host, "127.0.0.1", sizeof(c->host)-1);
+    snprintf(c->host, sizeof(c->host), "%s", "127.0.0.1");
 #else
-    c->mode = MODE_UNIX;
-    if (DEFAULT_UNIX_SOCK)
-        strncpy(c->socket_path, DEFAULT_UNIX_SOCK, sizeof(c->socket_path)-1);
+    c->mode = VC_MODE_UNIX;
+    snprintf(c->socket_path, sizeof(c->socket_path), "%s", DEFAULT_UNIX_SOCK);
 #endif
     default_cfg_path(c->cfg_path, sizeof(c->cfg_path));
 }
 
 static void cfg_show(const cfg_t *c) {
     fprintf(stderr, "[cfg] mode=%s socket=%s host=%s port=%d cfg=%s\n",
-        c->mode==MODE_TCP?"tcp":(c->mode==MODE_UNIX?"unix":"unset"),
+        c->mode==VC_MODE_TCP?"tcp":(c->mode==VC_MODE_UNIX?"unix":"unset"),
         c->socket_path[0]?c->socket_path:"(n/a)",
         c->host[0]?c->host:"(n/a)",
         c->port,
@@ -125,33 +122,49 @@ static void cfg_load_file(cfg_t *c, const char *path) {
         *eq = 0;
         char *k = trim(p);
         char *v = trim(eq+1);
-        if (strcasecmp(k,"mode")==0) {
+        if (!*k) continue;
+
+        if (!strcasecmp(k,"mode")) {
 #ifdef _WIN32
-            if (!strcasecmp(v,"tcp")) c->mode = MODE_TCP; // unix mode unsupported on Windows
+            if (!strcasecmp(v,"tcp")) c->mode = VC_MODE_TCP; // UNIX sockets unsupported on Windows
 #else
-            if (!strcasecmp(v,"tcp")) c->mode = MODE_TCP;
-            else if (!strcasecmp(v,"unix")) c->mode = MODE_UNIX;
+            if (!strcasecmp(v,"tcp")) c->mode = VC_MODE_TCP;
+            else if (!strcasecmp(v,"unix")) c->mode = VC_MODE_UNIX;
 #endif
-        } else if (strcasecmp(k,"socket")==0) {
+        } else if (!strcasecmp(k,"socket")) {
 #ifndef _WIN32
-            snprintf(c->socket_path, sizeof(c->socket_path), "%s", v);
+            if (snprintf(c->socket_path, sizeof(c->socket_path), "%s", v) >= (int)sizeof(c->socket_path)) {
+                fprintf(stderr, "config: socket path truncated to %zu bytes\n", sizeof(c->socket_path)-1);
+            }
 #endif
-        } else if (strcasecmp(k,"host")==0) {
-            snprintf(c->host, sizeof(c->host), "%s", v);
-        } else if (strcasecmp(k,"port")==0) {
+        } else if (!strcasecmp(k,"host")) {
+            if (snprintf(c->host, sizeof(c->host), "%s", v) >= (int)sizeof(c->host)) {
+                fprintf(stderr, "config: host truncated to %zu bytes\n", sizeof(c->host)-1);
+            }
+        } else if (!strcasecmp(k,"port")) {
             c->port = atoi(v);
         }
     }
     fclose(fp);
 }
 
+// ----- Connections -----
 #ifndef _WIN32
 static int connect_unix_path(const char *sock) {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) { perror("socket(AF_UNIX)"); return -1; }
     struct sockaddr_un addr; memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, sock, sizeof(addr.sun_path)-1);
+
+    size_t slen = strlen(sock);
+    if (slen >= sizeof(addr.sun_path)) {
+        fprintf(stderr, "unix socket path too long (max %zu): %s\n",
+                sizeof(addr.sun_path) - 1, sock);
+        CLOSESOCK(fd);
+        return -1;
+    }
+    memcpy(addr.sun_path, sock, slen + 1);
+
     if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("connect(unix)"); CLOSESOCK(fd); return -1;
     }
@@ -186,12 +199,12 @@ static int connect_tcp_host(const char *host, int port) {
 }
 
 static int connect_from_cfg(const cfg_t *c) {
-    if (c->mode == MODE_TCP) {
+    if (c->mode == VC_MODE_TCP) {
         if (!c->host[0] || c->port<=0) { fprintf(stderr, "tcp config incomplete\n"); return -1; }
         return connect_tcp_host(c->host, c->port);
     }
 #ifndef _WIN32
-    if (c->mode == MODE_UNIX) {
+    if (c->mode == VC_MODE_UNIX) {
         if (!c->socket_path[0]) { fprintf(stderr, "unix socket path missing\n"); return -1; }
         return connect_unix_path(c->socket_path);
     }
@@ -200,27 +213,25 @@ static int connect_from_cfg(const cfg_t *c) {
     return -1;
 }
 
+// ----- I/O -----
 static int send_command_fd(int fd, const char *line) {
     size_t len = strlen(line);
-    // append newline if needed
+    // Ensure trailing newline (server expects '\n')
 #ifdef _WIN32
-    // server expects '\n'; use "\n"
-#endif
     if (len==0 || line[len-1] != '\n') {
-#ifdef _WIN32
         if (send(fd, line, (int)len, 0) < 0) return -1;
         if (send(fd, "\n", 1, 0) < 0) return -1;
+    } else {
+        if (send(fd, line, (int)len, 0) < 0) return -1;
+    }
 #else
+    if (len==0 || line[len-1] != '\n') {
         if (write(fd, line, len) < 0) return -1;
         if (write(fd, "\n", 1) < 0) return -1;
-#endif
     } else {
-#ifdef _WIN32
-        if (send(fd, line, (int)len, 0) < 0) return -1;
-#else
         if (write(fd, line, len) < 0) return -1;
-#endif
     }
+#endif
 
     char buf[8192];
 #ifdef _WIN32
@@ -236,6 +247,7 @@ static int send_command_fd(int fd, const char *line) {
     return 0;
 }
 
+// ----- CLI -----
 static void usage(const char *prog) {
 #ifdef _WIN32
     fprintf(stderr,
@@ -262,21 +274,23 @@ int main(int argc, char **argv) {
 
     cfg_t cfg; cfg_init_defaults(&cfg);
 
-    int opt;
     const char *cli_cfg = NULL;
     const char *cli_tcp = NULL;
 #ifndef _WIN32
     const char *cli_sock = NULL;
 #endif
 
-    // very small getopt replacement for Windows (MSVC lacks unistd.h getopt)
 #ifdef _WIN32
-    for (int i=1; i<argc; ) {
-        if (!strcmp(argv[i], "-c") && i+1<argc) { cli_cfg = argv[i+1]; i+=2; continue; }
-        if (!strcmp(argv[i], "-T") && i+1<argc) { cli_tcp = argv[i+1]; i+=2; continue; }
+    // minimal flag parsing on Windows (no getopt)
+    int argi = 1;
+    while (argi < argc) {
+        if (!strcmp(argv[argi], "-c") && argi+1<argc) { cli_cfg = argv[argi+1]; argi+=2; continue; }
+        if (!strcmp(argv[argi], "-T") && argi+1<argc) { cli_tcp = argv[argi+1]; argi+=2; continue; }
+        if (!strcmp(argv[argi], "-h")) { usage(argv[0]); WSACleanup(); return 0; }
         break;
     }
 #else
+    int opt;
     while ((opt = getopt(argc, argv, "c:S:T:h")) != -1) {
         switch (opt) {
             case 'c': cli_cfg = optarg; break;
@@ -285,10 +299,12 @@ int main(int argc, char **argv) {
             case 'h': default: usage(argv[0]); return opt=='h'?0:1;
         }
     }
+    int argi = optind;
 #endif
 
+    // Load config
     if (cli_cfg) {
-        strncpy(cfg.cfg_path, cli_cfg, sizeof(cfg.cfg_path)-1);
+        snprintf(cfg.cfg_path, sizeof(cfg.cfg_path), "%s", cli_cfg);
         cfg_load_file(&cfg, cfg.cfg_path);
     } else {
         cfg_load_file(&cfg, cfg.cfg_path);
@@ -296,40 +312,50 @@ int main(int argc, char **argv) {
 
 #ifndef _WIN32
     if (cli_sock) {
-        cfg.mode = MODE_UNIX;
-        strncpy(cfg.socket_path, cli_sock, sizeof(cfg.socket_path)-1);
+        cfg.mode = VC_MODE_UNIX;
+        if (snprintf(cfg.socket_path, sizeof(cfg.socket_path), "%s", cli_sock) >= (int)sizeof(cfg.socket_path)) {
+            fprintf(stderr, "socket path too long (limit %zu)\n", sizeof(cfg.socket_path)-1);
+        }
     }
 #endif
 
     if (cli_tcp) {
         const char *colon = strchr(cli_tcp, ':');
-        if (!colon) { fprintf(stderr, "-T expects host:port\n"); return 1; }
+        if (!colon) { fprintf(stderr, "-T expects host:port\n"); 
+#ifdef _WIN32
+            WSACleanup();
+#endif
+            return 1; 
+        }
         size_t hl = (size_t)(colon - cli_tcp);
-        if (hl >= sizeof(cfg.host)) { fprintf(stderr, "host too long\n"); return 1; }
+        if (hl >= sizeof(cfg.host)) { fprintf(stderr, "host too long\n"); 
+#ifdef _WIN32
+            WSACleanup();
+#endif
+            return 1; 
+        }
         memcpy(cfg.host, cli_tcp, hl); cfg.host[hl]=0;
         cfg.port = atoi(colon+1);
-        cfg.mode = MODE_TCP;
+        cfg.mode = VC_MODE_TCP;
     }
-
-#ifdef _WIN32
-    int first_cmd = (cli_cfg || cli_tcp) ? 1 : 1; // default; simple parser
-    // find first non-flag arg
-    int argi = 1;
-    while (argi < argc && argv[argi][0]=='-') {
-        if ((argv[argi][1]=='c' || argv[argi][1]=='T') && argi+1<argc) argi+=2;
-        else argi++;
-    }
-#else
-    int argi = optind;
-#endif
 
     // One-shot mode if a command was provided
     if (argi < argc) {
         size_t total=0; for (int i=argi;i<argc;i++) total += strlen(argv[i])+1;
-        char *line = (char*)malloc(total+2); if (!line) { perror("malloc"); return 1; }
+        char *line = (char*)malloc(total+2); if (!line) { perror("malloc"); 
+#ifdef _WIN32
+            WSACleanup();
+#endif
+            return 1; 
+        }
         line[0]=0; for (int i=argi;i<argc;i++){ strcat(line, argv[i]); if (i+1<argc) strcat(line," "); }
         int fd = connect_from_cfg(&cfg);
-        if (fd < 0) { free(line); return 2; }
+        if (fd < 0) { free(line); 
+#ifdef _WIN32
+            WSACleanup();
+#endif
+            return 2; 
+        }
         int rc = send_command_fd(fd, line);
         CLOSESOCK(fd);
         free(line);
@@ -348,16 +374,14 @@ reconnect:
         fprintf(stderr, "unable to connect; you can /connect or Ctrl-C\n");
     }
 
-    char *line = NULL; size_t cap=0;
-    // portable getline: use POSIX getline if available; otherwise minimal fallback
 #if defined(_WIN32)
-    // Simple fgets-based loop
-    char buf[4096];
+    char ibuf[4096];
     for (;;) {
         fprintf(stderr, "vim-cmd> ");
-        if (!fgets(buf, sizeof buf, stdin)) { fprintf(stderr, "\n"); break; }
-        char *cmd = trim(buf);
+        if (!fgets(ibuf, sizeof ibuf, stdin)) { fprintf(stderr, "\n"); break; }
+        char *cmd = trim(ibuf);
 #else
+    char *line = NULL; size_t cap=0;
     for (;;) {
         fprintf(stderr, "vim-cmd> ");
         ssize_t n = getline(&line, &cap, stdin);
@@ -384,13 +408,17 @@ reconnect:
                     if (!strcasecmp(kind,"tcp")) {
                         int p = (n>=3)?atoi(b):cfg.port;
                         if (p<=0) { fprintf(stderr, "bad port\n"); continue; }
-                        cfg.mode = MODE_TCP;
-                        strncpy(cfg.host, a, sizeof(cfg.host)-1);
+                        cfg.mode = VC_MODE_TCP;
+                        if (snprintf(cfg.host, sizeof(cfg.host), "%s", a) >= (int)sizeof(cfg.host)) {
+                            fprintf(stderr, "host truncated to %zu bytes\n", sizeof(cfg.host)-1);
+                        }
                         cfg.port = p;
 #ifndef _WIN32
                     } else if (!strcasecmp(kind,"unix")) {
-                        cfg.mode = MODE_UNIX;
-                        strncpy(cfg.socket_path, a, sizeof(cfg.socket_path)-1);
+                        cfg.mode = VC_MODE_UNIX;
+                        if (snprintf(cfg.socket_path, sizeof(cfg.socket_path), "%s", a) >= (int)sizeof(cfg.socket_path)) {
+                            fprintf(stderr, "socket path too long (limit %zu)\n", sizeof(cfg.socket_path)-1);
+                        }
 #endif
                     } else {
 #ifdef _WIN32
@@ -417,7 +445,7 @@ reconnect:
 
         if (fd < 0) { fprintf(stderr, "not connected; try /connect\n"); continue; }
         int rc = send_command_fd(fd, cmd);
-        if (rc == -2) {
+        if (rc == -2) { // server closed; auto-reconnect once
             CLOSESOCK(fd); fd=-1;
             fprintf(stderr, "[info] reconnecting...\n");
             fd = connect_from_cfg(&cfg);
@@ -426,7 +454,7 @@ reconnect:
     }
 
     if (fd >= 0) CLOSESOCK(fd);
-#if !defined(_WIN32)
+#ifndef _WIN32
     free(line);
 #endif
 
