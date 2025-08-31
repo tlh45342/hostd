@@ -1,6 +1,7 @@
 #pragma once
 #include <stdio.h>
 #include <stdbool.h>
+#include <signal.h> 
 
 extern volatile sig_atomic_t g_running;   // set false to stop server
 extern FILE *g_logfp;
