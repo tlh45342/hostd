@@ -40,13 +40,12 @@
 typedef enum { MODE_UNSET=0, MODE_UNIX=1, MODE_TCP=2 } vc_mode_t;
 
 typedef struct {
-    mode_t mode;
+    vc_mode_t mode;
     char   socket_path[256];
     char   host[128];
     int    port;
     char   cfg_path[512];
-    vc_mode_t mode;
-} cfg_t;
+} cfg_t
 
 static const char *DEFAULT_UNIX_SOCK =
 #ifdef _WIN32
