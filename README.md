@@ -36,3 +36,5 @@ sudo systemctl status hostd
 journalctl -u hostd -f
 
 sudo systemctl daemon-reload
+
+vim-cmd> /set host=0.0.0.0 port=9000 mode=tcp
