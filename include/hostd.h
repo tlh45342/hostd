@@ -1,7 +1,7 @@
 #pragma once
 #include <stdio.h>
 #include <stdbool.h>
-#include <signal.h> 
+#include <signal.h>
 
 extern volatile sig_atomic_t g_running;   // set false to stop server
 extern FILE *g_logfp;
@@ -11,4 +11,8 @@ void log_init(const char *path, int foreground);
 void log_close(void);
 void log_msg(const char *fmt, ...);
 
+// existing
 int server_run(const char *sock_path);
+
+// NEW: TCP variant
+int server_run_tcp(const char *bind_host, int bind_port);
