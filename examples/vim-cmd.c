@@ -315,4 +315,273 @@ static void usage(const char *prog) {
 
 static int apply_kv(cfg_t *cfg, const char *k, const char *v) {
     if (!k || !v) return -1;
-    if
+    if (!strcasecmp(k,"mode")) {
+#ifdef _WIN32
+        if (!strcasecmp(v,"tcp")) cfg->mode = VC_MODE_TCP;
+#else
+        if (!strcasecmp(v,"tcp")) cfg->mode = VC_MODE_TCP;
+        else if (!strcasecmp(v,"unix")) cfg->mode = VC_MODE_UNIX;
+#endif
+        else return -1;
+    } else if (!strcasecmp(k,"host")) {
+        if (snprintf(cfg->host, sizeof(cfg->host), "%s", v) >= (int)sizeof(cfg->host)) {
+            fprintf(stderr, "host truncated to %zu bytes\n", sizeof(cfg->host)-1);
+        }
+    } else if (!strcasecmp(k,"port")) {
+        cfg->port = atoi(v);
+    } else if (!strcasecmp(k,"socket")) {
+#ifndef _WIN32
+        if (snprintf(cfg->socket_path, sizeof(cfg->socket_path), "%s", v) >= (int)sizeof(cfg->socket_path)) {
+            fprintf(stderr, "socket path too long (limit %zu)\n", sizeof(cfg->socket_path)-1);
+        }
+#else
+        fprintf(stderr, "socket not supported on Windows; ignoring\n");
+#endif
+    } else {
+        return -1;
+    }
+    return 0;
+}
+
+int main(int argc, char **argv) {
+#ifdef _WIN32
+    WSADATA w;
+    if (WSAStartup(MAKEWORD(2,2), &w) != 0) { fprintf(stderr, "WSAStartup failed\n"); return 1; }
+#endif
+
+    cfg_t cfg; cfg_init_defaults(&cfg);
+
+    const char *cli_cfg = NULL;
+    const char *cli_tcp = NULL;
+#ifndef _WIN32
+    const char *cli_sock = NULL;
+#endif
+
+#ifdef _WIN32
+    int argi = 1;
+    while (argi < argc) {
+        if (!strcmp(argv[argi], "-c") && argi+1<argc) { cli_cfg = argv[argi+1]; argi+=2; continue; }
+        if (!strcmp(argv[argi], "-T") && argi+1<argc) { cli_tcp = argv[argi+1]; argi+=2; continue; }
+        if (!strcmp(argv[argi], "-h")) { usage(argv[0]); WSACleanup(); return 0; }
+        break;
+    }
+#else
+    int opt;
+    while ((opt = getopt(argc, argv, "c:S:T:h")) != -1) {
+        switch (opt) {
+            case 'c': cli_cfg = optarg; break;
+            case 'S': cli_sock = optarg; break;
+            case 'T': cli_tcp  = optarg; break;
+            case 'h': default: usage(argv[0]); return opt=='h'?0:1;
+        }
+    }
+    int argi = optind;
+#endif
+
+    if (cli_cfg) {
+        snprintf(cfg.cfg_path, sizeof(cfg.cfg_path), "%s", cli_cfg);
+        cfg_load_file(&cfg, cfg.cfg_path);
+    } else {
+        cfg_load_file(&cfg, cfg.cfg_path);
+    }
+#ifndef _WIN32
+    if (cli_sock) {
+        cfg.mode = VC_MODE_UNIX;
+        if (snprintf(cfg.socket_path, sizeof(cfg.socket_path), "%s", cli_sock) >= (int)sizeof(cfg.socket_path)) {
+            fprintf(stderr, "socket path too long (limit %zu)\n", sizeof(cfg.socket_path)-1);
+        }
+    }
+#endif
+    if (cli_tcp) {
+        const char *colon = strchr(cli_tcp, ':');
+        if (!colon) { fprintf(stderr, "-T expects host:port\n");
+#ifdef _WIN32
+            WSACleanup();
+#endif
+            return 1;
+        }
+        size_t hl = (size_t)(colon - cli_tcp);
+        if (hl >= sizeof(cfg.host)) { fprintf(stderr, "host too long\n");
+#ifdef _WIN32
+            WSACleanup();
+#endif
+            return 1;
+        }
+        memcpy(cfg.host, cli_tcp, hl); cfg.host[hl]=0;
+        cfg.port = atoi(colon+1);
+        cfg.mode = VC_MODE_TCP;
+    }
+
+    // ---- One-shot "set" subcommand: write config and exit
+    if (argi < argc && !strcasecmp(argv[argi], "set")) {
+        if (!cfg.cfg_path[0]) { default_cfg_path(cfg.cfg_path, sizeof cfg.cfg_path); }
+        for (int i=argi+1; i<argc; i++) {
+            char *eq = strchr(argv[i], '=');
+            if (!eq) { fprintf(stderr, "expected key=value, got '%s'\n", argv[i]); continue; }
+            *eq = 0;
+            const char *k = argv[i];
+            const char *v = eq+1;
+            if (apply_kv(&cfg, k, v) != 0) fprintf(stderr, "unknown key '%s'\n", k);
+        }
+        cfg_write_file(&cfg, cfg.cfg_path);
+#ifdef _WIN32
+        WSACleanup();
+#endif
+        return 0;
+    }
+
+    // ---- One-shot command if remaining args exist (not "set")
+    if (argi < argc) {
+        size_t total=0; for (int i=argi;i<argc;i++) total += strlen(argv[i])+1;
+        char *line = (char*)malloc(total+2); if (!line) { perror("malloc");
+#ifdef _WIN32
+            WSACleanup();
+#endif
+            return 1;
+        }
+        line[0]=0; for (int i=argi;i<argc;i++){ strcat(line, argv[i]); if (i+1<argc) strcat(line," "); }
+        int fd = connect_from_cfg(&cfg);
+        if (fd < 0) { free(line);
+#ifdef _WIN32
+            WSACleanup();
+#endif
+            return 2;
+        }
+        int rc = send_command_fd(fd, line);
+        CLOSESOCK(fd);
+        free(line);
+#ifdef _WIN32
+        WSACleanup();
+#endif
+        return (rc==0)?0:3;
+    }
+
+    // ---- Interactive REPL
+    fprintf(stderr, "vim-cmd shell. Type /help. Using config: %s\n", cfg.cfg_path);
+reconnect:
+    cfg_show(&cfg);
+    int fd = connect_from_cfg(&cfg);
+    if (fd < 0) fprintf(stderr, "unable to connect; you can /connect or Ctrl-C\n");
+
+#if defined(_WIN32)
+    char ibuf[4096];
+    for (;;) {
+        fprintf(stderr, "vim-cmd> ");
+        if (!fgets(ibuf, sizeof ibuf, stdin)) { fprintf(stderr, "\n"); break; }
+        char *cmd = trim(ibuf);
+#else
+    char *line = NULL; size_t cap=0;
+    for (;;) {
+        fprintf(stderr, "vim-cmd> ");
+        ssize_t n = getline(&line, &cap, stdin);
+        if (n < 0) { fprintf(stderr, "\n"); break; }
+        char *cmd = trim(line);
+#endif
+        if (*cmd==0) continue;
+
+        // allow both /quit and plain quit
+        if (!strcasecmp(cmd,"quit") || !strcasecmp(cmd,"exit") ||
+            !strcasecmp(cmd,"/quit") || !strcasecmp(cmd,"/exit")) break;
+
+        if (!strcasecmp(cmd,"/help")) {
+#ifdef _WIN32
+            fprintf(stderr,
+                "Built-ins:\n"
+                "  /help\n"
+                "  /show\n"
+                "  /set key=value [key=value ...]   (writes config)\n"
+                "  /connect tcp <host> <port>\n"
+                "  /quit | /exit\n");
+#else
+            fprintf(stderr,
+                "Built-ins:\n"
+                "  /help\n"
+                "  /show\n"
+                "  /set key=value [key=value ...]   (writes config)\n"
+                "  /connect tcp <host> <port>\n"
+                "  /connect unix <socket>\n"
+                "  /quit | /exit\n");
+#endif
+            continue;
+        }
+        if (!strcasecmp(cmd,"/show")) { cfg_show(&cfg); continue; }
+
+        if (!strncasecmp(cmd,"/set",4)) {
+            // parse /set key=value [key=value ...]
+            char *p = cmd+4;
+            int changed = 0;
+            while (*p) {
+                while (*p && isspace((unsigned char)*p)) p++;
+                if (!*p) break;
+                char *kv = p;
+                while (*p && !isspace((unsigned char)*p)) p++;
+                char save = *p; *p = 0;
+                char *eq = strchr(kv, '=');
+                if (eq) {
+                    *eq = 0;
+                    const char *k = kv;
+                    const char *v = eq+1;
+                    if (apply_kv(&cfg, k, v) == 0) changed = 1;
+                    else fprintf(stderr, "unknown key '%s'\n", k);
+                } else {
+                    fprintf(stderr, "expected key=value near '%s'\n", kv);
+                }
+                *p = save;
+            }
+            if (changed) cfg_write_file(&cfg, cfg.cfg_path);
+            continue;
+        }
+
+        if (!strncasecmp(cmd,"/connect",8)) {
+            char kind[16]={0}, a[256]={0}, b[64]={0};
+            int n = sscanf(cmd+8, "%15s %255s %63s", kind, a, b);
+            if (n >= 2) {
+                if (!strcasecmp(kind,"tcp")) {
+                    int p = (n>=3)?atoi(b):cfg.port;
+                    if (p<=0) { fprintf(stderr, "bad port\n"); continue; }
+                    cfg.mode = VC_MODE_TCP;
+                    if (snprintf(cfg.host, sizeof(cfg.host), "%s", a) >= (int)sizeof(cfg.host)) {
+                        fprintf(stderr, "host truncated to %zu bytes\n", sizeof(cfg.host)-1);
+                    }
+                    cfg.port = p;
+#ifndef _WIN32
+                } else if (!strcasecmp(kind,"unix")) {
+                    cfg.mode = VC_MODE_UNIX;
+                    if (snprintf(cfg.socket_path, sizeof(cfg.socket_path), "%s", a) >= (int)sizeof(cfg.socket_path)) {
+                        fprintf(stderr, "socket path too long (limit %zu)\n", sizeof(cfg.socket_path)-1);
+                    }
+#endif
+                } else {
+#ifdef _WIN32
+                    fprintf(stderr, "usage: /connect tcp <host> <port>\n");
+#else
+                    fprintf(stderr, "usage: /connect tcp <host> <port> | /connect unix <socket>\n");
+#endif
+                    continue;
+                }
+                if (fd >= 0) { CLOSESOCK(fd); fd = -1; }
+                goto reconnect;
+            } else {
+#ifdef _WIN32
+                fprintf(stderr, "usage: /connect tcp <host> <port>\n");
+#else
+                fprintf(stderr, "usage: /connect tcp <host> <port> | /connect unix <socket>\n");
+#endif
+            }
+            continue;
+        }
+
+        if (fd < 0) { fprintf(stderr, "not connected; try /connect or /set\n"); continue; }
+        int rc = send_command_fd(fd, cmd);
+        if (rc == -2) { CLOSESOCK(fd); fd=-1; fprintf(stderr, "[info] reconnecting...\n"); fd = connect_from_cfg(&cfg); }
+    }
+
+    if (fd >= 0) CLOSESOCK(fd);
+#ifndef _WIN32
+    free(line);
+#endif
+#ifdef _WIN32
+    WSACleanup();
+#endif
+    return 0;
+}
