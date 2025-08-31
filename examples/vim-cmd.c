@@ -37,7 +37,7 @@
   #define PATH_SEP '/'
 #endif
 
-typedef enum { MODE_UNSET=0, MODE_UNIX=1, MODE_TCP=2 } mode_t;
+typedef enum { MODE_UNSET=0, MODE_UNIX=1, MODE_TCP=2 } vc_mode_t;
 
 typedef struct {
     mode_t mode;
