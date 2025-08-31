@@ -45,7 +45,7 @@ typedef struct {
     char   host[128];
     int    port;
     char   cfg_path[512];
-} cfg_t
+} cfg_t;
 
 static const char *DEFAULT_UNIX_SOCK =
 #ifdef _WIN32
