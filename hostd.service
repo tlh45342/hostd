@@ -1,0 +1,16 @@
+[Unit]
+Description=HostD VM Daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/hostd -S /var/run/hostd.sock -l /var/log/hostd.log -p /var/run/hostd.pid
+Restart=always
+RestartSec=3
+User=root
+Group=root
+
+RuntimeDirectory=hostd
+PIDFile=/var/run/hostd.pid
+
+[Install]
+WantedBy=multi-user.target
