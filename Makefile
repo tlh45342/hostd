@@ -41,3 +41,12 @@ install: hostd
 	systemctl daemon-reload
 	# optionally enable on install
 	# systemctl enable hostd
+
+uninstall: stop disable
+	# Remove systemd unit (if present) and reload
+	- rm -f $(DESTDIR)$(UNITDIR)/$(SERVICE_NAME).service
+	- if command -v systemctl >/dev/null 2>&1; then systemctl daemon-reload; fi
+	# Remove binaries
+	- rm -f $(DESTDIR)$(BINDIR)/hostd
+	- rm -f $(DESTDIR)$(BINDIR)/vim-cmd
+	@echo "Uninstall complete."
