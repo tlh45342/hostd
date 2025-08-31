@@ -19,6 +19,7 @@ static int ok(char *out, size_t outsz, const char *fmt, ...) {
     if ((size_t)n < outsz-1) { out[n++] = '\n'; out[n] = 0; }
     return n;
 }
+
 static int err(char *out, size_t outsz, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -31,6 +32,7 @@ static int err(char *out, size_t outsz, const char *fmt, ...) {
 
 // simple kv parser: key=val tokens, whitespace separated
 static const char* kv_get(const char *key, char *copy, size_t copy_sz) {
+    (void)copy_sz;  // silence unused parameter
     // search token "key=" in copy
     size_t keylen = strlen(key);
     char *p = copy;
