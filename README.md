@@ -25,5 +25,10 @@ which will install the appropriate hostd.service file.
 ```bash
 sudo systemctl enable hostd 
 sudo systemctl start hostd
+```
+
+The following may be used to check on the "hostd" service status
+
+```bash
 sudo systemctl status hostd
 ```
