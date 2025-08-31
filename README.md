@@ -32,3 +32,5 @@ The following may be used to check on the "hostd" service status
 ```bash
 sudo systemctl status hostd
 ```
+
+journalctl -u hostd -f
