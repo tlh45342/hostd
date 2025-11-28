@@ -1,51 +1,52 @@
-# hostd strawman - Makefile
-CC      ?= gcc
-CFLAGS  ?= -Wall -Wextra -O2 -g -D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE
+# Makefile for hostd (no vim-cmd)
+
+CC      ?= cc
+CFLAGS  ?= -std=c11 -Wall -Wextra -O2
 LDFLAGS ?=
-INC     ?= -Iinclude
+PREFIX  ?= /usr/local
+BINDIR  ?= $(PREFIX)/sbin
+SYSTEMD_DIR ?= /etc/systemd/system
 
-PREFIX       ?= /usr/local
-BINDIR       ?= $(PREFIX)/bin
-UNITDIR      ?= /etc/systemd/system
-SERVICE_NAME ?= hostd
+TARGET  = hostd
 
-SRC = src/hostd.c src/server.c src/protocol.c src/libvm_stub.c src/log.c src/daemonize.c
+SRCS    = hostd.c \
+          server.c \
+          protocol.c \
+          log.c \
+          daemonize.c \
+          libvm_stub.c
+
+OBJS    = $(SRCS:.c=.o)
 
 .PHONY: all clean install uninstall
 
-all: hostd vim-cmd
+all: $(TARGET)
 
-hostd: $(SRC)
-	$(CC) $(CFLAGS) $(INC) -o $@ $(SRC) $(LDFLAGS)
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LDFLAGS)
 
-vim-cmd: examples/vim-cmd.c
-	$(CC) $(CFLAGS) $(INC) -o $@ $< $(LDFLAGS)
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f hostd vim-cmd
-	rm -f *.o src/*.o
+	rm -f $(TARGET) $(OBJS)
 
-install: hostd vim-cmd
-	# Binaries
-	install -d $(DESTDIR)$(BINDIR)
-	install -m 0755 hostd   $(DESTDIR)$(BINDIR)/hostd
-	install -m 0755 vim-cmd $(DESTDIR)$(BINDIR)/vim-cmd
-	# Optional: systemd unit (only if present in repo at systemd/$(SERVICE_NAME).service)
-	@if [ -f systemd/$(SERVICE_NAME).service ]; then \
-	  install -d $(DESTDIR)$(UNITDIR); \
-	  install -m 0644 systemd/$(SERVICE_NAME).service $(DESTDIR)$(UNITDIR)/$(SERVICE_NAME).service; \
-	  if command -v systemctl >/dev/null 2>&1; then systemctl daemon-reload; fi; \
-	  echo "Installed systemd unit: $(UNITDIR)/$(SERVICE_NAME).service"; \
+install: $(TARGET)
+	@echo "Installing $(TARGET) to $(DESTDIR)$(BINDIR)"
+	mkdir -p $(DESTDIR)$(BINDIR)
+	install -m 0755 $(TARGET) $(DESTDIR)$(BINDIR)/
+
+	@# Optional: install systemd service if present
+	if [ -f hostd.service ]; then \
+		echo "Installing hostd.service to $(DESTDIR)$(SYSTEMD_DIR)"; \
+		mkdir -p $(DESTDIR)$(SYSTEMD_DIR); \
+		install -m 0644 hostd.service $(DESTDIR)$(SYSTEMD_DIR)/; \
 	else \
-	  echo "Note: systemd/$(SERVICE_NAME).service not found; skipping unit install."; \
+		echo "hostd.service not found (skipping systemd unit install)"; \
 	fi
-	@echo "Install complete."
 
 uninstall:
-	# Remove systemd unit (if present) and reload units (does NOT stop/disable)
-	- rm -f $(DESTDIR)$(UNITDIR)/$(SERVICE_NAME).service
-	- if command -v systemctl >/dev/null 2>&1; then systemctl daemon-reload; fi
-	# Remove binaries
-	- rm -f $(DESTDIR)$(BINDIR)/hostd
-	- rm -f $(DESTDIR)$(BINDIR)/vim-cmd
-	@echo "Uninstall complete. (If the service was running, it may still be active.)"
+	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
+	if [ -f $(DESTDIR)$(SYSTEMD_DIR)/hostd.service ]; then \
+		rm -f $(DESTDIR)$(SYSTEMD_DIR)/hostd.service; \
+	fi
