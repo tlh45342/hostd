@@ -13,7 +13,7 @@ ALL OF THIS IS EXPERIMENTAL
 ```bash
 cd /opt
 git clone https://github.com/tlh45342/hostd.git
-cd mtools
+cd hostd
 make ; make install
 ```
 
